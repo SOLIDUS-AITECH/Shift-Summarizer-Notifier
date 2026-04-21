@@ -1,0 +1,130 @@
+version: '1.0'
+blocks:
+  03d63fa4-4207-4750-ba41-ddbbb957697f:
+    type: agent
+    name: shift finder
+    inputs:
+      systemPrompt: |-
+        Role:
+        You are a shift manager.
+
+        INPUTS
+
+        1. A weekly shift schedule in flexible tabular form. <googlesheets1.data>
+
+           * Each row represents one shift.
+           * Every row will contain at least these four pieces of information, possibly under different column names:
+             • A day of the week (full name or 3-letter abbreviation, case-insensitive).
+             • A shift time range in 12-hour format (for example "9:00 AM - 5:00 PM", "10 PM - 6 AM", "9AM–5PM").
+             • An employee name.
+             • An employee email.
+           * Rows may also contain extra columns (such as notes or tasks). Ignore anything that is not one of the four required fields.
+        2. A local day-of-week and time in 12-hour format: \<function1.result>. Example: "Wednesday 4:37 PM". This represents the current local time (NOW).
+
+        TASK
+
+        1. From the schedule, extract only: day, shift start time, shift end time, employee name, and employee email. Ignore all other fields.
+        2. Interpret NOW (\<function1.result>) as the current local weekday and time.
+
+        4. A shift is "in progress" if NOW/<function1.result> is later than or equal to its start time and earlier than its end time, or if NOW/<function1.result> is exactly equal to its start time. Ignore all shifts that are in progress.
+        5. The "next scheduled shift" is the earliest shift that begins strictly later than NOW/<function1.result>. If none remain today, roll forward to the next day. After Sunday, continue with Monday. Limit the search to seven days from NOW/<function1.result>.
+        6. If multiple shifts begin at the same earliest start time later than NOW/<function1.result>, include all of them. Preserve the original input order for employees.
+        7. If overlapping shifts exist with different start times later than NOW/<function1.result>, choose the one with the earliest start time.
+        8. Collect the emails of the employees in the chosen next shift. Remove duplicates, but keep the order of first appearance from the input.
+
+        OUTPUT RULES
+
+        * Think step by step internally but do not show reasoning.
+        * Return only the final result as a single comma-separated string of emails with no spaces (example: `alice@email.com,bob@email.com`).
+        * If no valid next shift exists within the next seven days, return an empty string (no characters).
+        * If the schedule cannot be parsed or an error occurs, return exactly: `Error`.
+        * Do not return JSON, arrays, brackets, quotes, explanations, or formatting.
+      model: gpt-4o
+    connections:
+      success: c407b7ef-07a3-4503-a584-f5252cad858b
+  ce42d5eb-bf75-49c0-bffc-f94020ed5efb:
+    type: agent
+    name: doc summarizer
+    inputs:
+      systemPrompt: |-
+        You are a shift manager responsible for handovers between employees.
+
+        INPUT
+        - A Doc containing detailed shift notes: <file2.files>.
+
+        TASK
+        1. Read the shift notes carefully.
+        2. Summarize them into a clear and concise handover message for the incoming shift.
+        3. Focus only on:
+           - Key events and incidents from the completed shift.
+           - Issues that require follow-up or monitoring.
+           - Priorities and tasks for the incoming shift.
+        4. Exclude:
+           - Your own comments or opinions.
+           - Subject lines, greetings, or sign-offs.
+           - JSON, arrays, brackets, or special formatting symbols (such as asterisks).
+
+        OUTPUT RULES
+        - The output must be plain text only.  
+        - Use short paragraphs or simple dash-separated lists for readability.  
+        - For section headings, use a line break followed by the heading text on its own line (no asterisks, no punctuation like “:” at the end).  
+        - Keep the tone professional, factual, and concise.  
+        - Do not include explanations about what you are doing.  
+        - Do not output anything except the final handover summary text.  
+        - If you are unable to process the file or any error occurs, return exactly: Error
+      model: gpt-4o
+      tools: []
+    connections:
+      success: c407b7ef-07a3-4503-a584-f5252cad858b
+  c407b7ef-07a3-4503-a584-f5252cad858b:
+    type: condition
+    name: Condition 1
+    inputs:
+      conditions:
+        if: <shiftfinder.content> != "Error" && <docsummarizer.content> != "Error"
+    connections:
+      conditions:
+        if: c150f1d8-2caa-45f6-baa7-933fe8e76497
+  6de57703-dc8e-495c-b041-c1621af7d270:
+    type: file
+    name: File 2
+    inputs:
+      inputMethod: url
+    connections:
+      success: ce42d5eb-bf75-49c0-bffc-f94020ed5efb
+  6f01de90-e628-4069-8ff3-9fc6ae7e04de:
+    type: function
+    name: Function1
+    inputs:
+      code: |
+        const currentDate = new Date();
+        const dayIndex = currentDate.getDay();
+        const days = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+        const dayName = days[dayIndex];
+        return currentDate.toLocaleTimeString() +" "+ dayName
+    connections:
+      success: 65405932-0465-4af3-8554-65404a153b38
+  c150f1d8-2caa-45f6-baa7-933fe8e76497:
+    type: gmail
+    name: Gmail 1
+    inputs:
+      operation: send_gmail
+      to: <shiftfinder.content>
+      subject: Previous Shift Handover
+      body: <docsummarizer.content>
+  65405932-0465-4af3-8554-65404a153b38:
+    type: google_sheets
+    name: Google Sheets 1
+    inputs:
+      operation: read
+    connections:
+      success: 03d63fa4-4207-4750-ba41-ddbbb957697f
+  dc7e286c-0507-4dcc-a1aa-52f2ccb9b678:
+    type: starter
+    name: Start
+    inputs:
+      startWorkflow: manual
+    connections:
+      success:
+        - 6de57703-dc8e-495c-b041-c1621af7d270
+        - 6f01de90-e628-4069-8ff3-9fc6ae7e04de
